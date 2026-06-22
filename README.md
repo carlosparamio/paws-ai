@@ -8,6 +8,18 @@ extracted from that snapshot, and run it either in the terminal or in a
 browser-based UI with optional AI-assisted parsing, AI-enhanced graphics, and
 an interactive debugger.
 
+### Firfurcio — original vs. AI-enhanced graphics
+
+Three locations from the Spanish adventure **Firfurcio** rendered with PAWS-AI.
+On the left, the deterministic ZX Spectrum frames produced by the engine; on
+the right, the same scenes regenerated with the `ai-painting` graphics mode.
+
+| Original graphics (rendered by PAWS-AI) | AI-enhanced graphics (`ai-painting`) |
+|------------------------------------------|--------------------------------------|
+| ![Firfurcio — original 1](games/screenshots/orig_01.png) | ![Firfurcio — AI painting 1](games/screenshots/ai_01.jpg) |
+| ![Firfurcio — original 2](games/screenshots/orig_02.png) | ![Firfurcio — AI painting 2](games/screenshots/ai_02.jpg) |
+| ![Firfurcio — original 3](games/screenshots/orig_03.png) | ![Firfurcio — AI painting 3](games/screenshots/ai_03.jpg) |
+
 ## Features
 
 - **Drop-in interpreter for PAWS snapshots.** Loads `.sna`, `.z80`, `.sp`

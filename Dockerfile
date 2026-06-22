@@ -10,6 +10,7 @@ ENV BUNDLE_DEPLOYMENT=1 \
     BUNDLE_PATH=/usr/local/bundle \
     BUNDLE_WITHOUT=test
 
+# hadolint ignore=DL3018
 RUN apk add --no-cache build-base ca-certificates
 
 COPY Gemfile Gemfile.lock ./
@@ -27,6 +28,7 @@ ENV BUNDLE_DEPLOYMENT=1 \
     BUNDLE_PATH=/usr/local/bundle \
     BUNDLE_WITHOUT=test
 
+# hadolint ignore=DL3018
 RUN apk add --no-cache ca-certificates \
     && addgroup -S paws \
     && adduser -S -G paws paws \
