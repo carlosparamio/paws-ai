@@ -1,0 +1,47 @@
+# Local secrets and config (never commit API keys or per-machine paths)
+.env
+.env.*
+!.env.example
+
+# OS / editor artifacts
+*.Zone.Identifier
+.DS_Store
+Thumbs.db
+
+# Local runtime / build artifacts
+cache/
+coverage/
+tmp/
+log/
+zesarux_*
+
+# SimpleCov result files (regenerated on every test run)
+/.last_run.json
+.resultset.json
+
+# ---------------------------------------------------------------------------
+# AI agents workspace.
+# ---------------------------------------------------------------------------
+.agents/
+opencode.json
+
+# ---------------------------------------------------------------------------
+# ZX Spectrum game files.
+#
+# The `games/` directory is the user's personal game library. By default
+# everything in it is ignored, with one exception: the bundled example
+# game "El Espía" ships with the public repository as a working sample
+# so the integration specs run out of the box. Its files live at
+# `games/espia.*` and `games/espia_en.*` and are matched by the
+# negation rules below.
+#
+# To keep the integration tests off the symlink, the public specs
+# reference `games/<file>` directly. The `spec/fixtures/games/`
+# symlink is only a convenience for local-only games and remains
+# gitignored; it is not used by the public suite.
+# ---------------------------------------------------------------------------
+games/*
+!games/espia*
+# Local symlink to the user's `games/` directory. Not used by the public
+# suite; kept out of the repo to avoid committing a dangling link.
+spec/fixtures/games

@@ -1,0 +1,187 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift(File.expand_path('../lib', __dir__))
+
+require 'paws/game_data/sna_loader'
+require 'paws/game_data/extractor'
+require 'paws/game_data/character_mapping_generator'
+require 'paws/game_data/adventure_translator'
+require 'paws/game_data/serializer'
+require 'paws/parsing/ai_parser/configuration'
+require 'paws/parsing/ai_parser/open_ai_chat_client'
+require 'paws/utils/env_loader'
+
+require 'optparse'
+
+options = {
+  mapping: nil,
+  output: nil,
+  generate_mapping: nil,
+  generate_mapping_mode: "heuristic",
+  translate_to: nil,
+  translate_from: nil,
+  translation_report: nil,
+  translation_batch_chars: nil
+}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: #{$PROGRAM_NAME} [options] <sna_file> [output.json]"
+
+  opts.on("-m", "--mapping PATH", "Path to character mapping JSON file") do |path|
+    options[:mapping] = path
+  end
+
+  opts.on("--generate-mapping PATH", "Generate a character mapping JSON file before extraction") do |path|
+    options[:generate_mapping] = path
+  end
+
+  opts.on("--generate-mapping-mode MODE", %w[heuristic ai], "Mapping generation mode: heuristic or ai (default: heuristic)") do |mode|
+    options[:generate_mapping_mode] = mode
+  end
+
+  opts.on("-o", "--output PATH", "Path to save extracted JSON data") do |path|
+    options[:output] = path
+  end
+
+  opts.on("--translate-to LANG", "Translate extracted game data to target language") do |lang|
+    options[:translate_to] = lang
+  end
+
+  opts.on("--translate-from LANG", "Source language for translation (optional)") do |lang|
+    options[:translate_from] = lang
+  end
+
+  opts.on("--translation-report PATH", "Path to save translation report JSON") do |path|
+    options[:translation_report] = path
+  end
+
+  opts.on("--translation-batch-chars N", Integer, "Approximate source-text characters per translation batch") do |value|
+    options[:translation_batch_chars] = value
+  end
+end.parse!
+
+if ARGV.empty?
+  $stderr.puts "Error: No SNA file specified."
+  exit 1
+end
+
+sna_path = ARGV[0]
+output_path = ARGV[1] || options[:output]
+
+unless File.exist?(sna_path)
+  $stderr.puts "Error: File not found: #{sna_path}"
+  exit 1
+end
+
+def generate_character_mapping(sna_path, mode)
+  game_data = PAWS::Extractor.new(mapping: {}).extract(sna_path)
+
+  generator =
+    if mode == "ai"
+      PAWS::EnvLoader.load
+      config = PAWS::AIParserConfiguration.from_env
+      PAWS::GameData::CharacterMappingGenerator.new(
+        model: config.model,
+        client: PAWS::OpenAIChatClient.new(
+          api_key: config.api_key,
+          endpoint: config.endpoint,
+          referer: config.referer,
+          title: config.title,
+        ),
+      )
+    else
+      PAWS::GameData::CharacterMappingGenerator.new
+    end
+
+  generator.generate(game_data, mode: mode.to_sym)
+end
+
+def translation_client
+  PAWS::EnvLoader.load
+  config = PAWS::AIParserConfiguration.from_env
+  [
+    PAWS::OpenAIChatClient.new(
+      api_key: config.api_key,
+      endpoint: config.endpoint,
+      referer: config.referer,
+      title: config.title,
+    ),
+    config.model,
+  ]
+end
+
+def translate_game_data(game_data, options)
+  $stderr.sync = true
+  client, model = translation_client
+  translator = PAWS::GameData::AdventureTranslator.new(
+    client: client,
+    model: model,
+    source_language: options[:translate_from],
+    target_language: options[:translate_to],
+    max_batch_chars: options[:translation_batch_chars] || PAWS::GameData::AdventureTranslator::MAX_BATCH_CHARS,
+    progress: ->(message) { $stderr.puts "[translation] #{message}" },
+  )
+  translated = translator.translate(game_data)
+
+  if options[:translation_report]
+    File.write(options[:translation_report], JSON.pretty_generate(translator.report))
+    $stderr.puts "Translation report: #{options[:translation_report]}"
+  end
+
+  translated
+end
+
+if options[:generate_mapping]
+  begin
+    mapping = generate_character_mapping(sna_path, options[:generate_mapping_mode])
+    File.write(options[:generate_mapping], JSON.pretty_generate(mapping))
+    $stderr.puts "Generated character mapping: #{options[:generate_mapping]}"
+    $stderr.puts "Mapping mode: #{options[:generate_mapping_mode]}"
+    options[:mapping] ||= options[:generate_mapping]
+  rescue => e
+    $stderr.puts "Error generating character mapping: #{e.message}"
+    exit 1
+  end
+end
+
+if options[:translate_to] && options[:mapping].nil?
+  $stderr.puts "Error: Translation requires an explicit character mapping."
+  $stderr.puts "Pass --mapping PATH, or generate one first with --generate-mapping PATH."
+  exit 1
+end
+
+extractor = PAWS::Extractor.new(mapping: options[:mapping])
+game_data = extractor.extract(sna_path)
+
+if options[:translate_to]
+  begin
+    game_data = translate_game_data(game_data, options)
+    $stderr.puts "Translated to: #{options[:translate_to]}"
+  rescue => e
+    $stderr.puts "Error translating game data: #{e.message}"
+    exit 1
+  end
+end
+
+if output_path
+  PAWS::GameData::Serializer.save(game_data, output_path)
+  $stderr.puts "Extracted: #{sna_path}"
+  $stderr.puts "Saved to: #{output_path}"
+else
+  puts PAWS::GameData::Serializer.to_json(game_data)
+end
+
+if output_path || !$stdout.tty?
+  # Only show info if saving to file or if explicitly requested (though here we just do it if output_path exists)
+  # Actually, let's always show info to stderr if we want
+  $stderr.puts
+  $stderr.puts "Game info:"
+  $stderr.puts "  Version: #{game_data['game']['version'] rescue 'Unknown'}"
+  $stderr.puts "  PAW version: #{game_data['game']['paw_version'] || 'N/A' rescue 'N/A'}"
+  $stderr.puts "  Compressed: #{game_data['game']['compressed'] rescue 'N/A'}"
+  $stderr.puts "  Locations: #{game_data['game']['num_locations'] rescue '0'}"
+  $stderr.puts "  Objects: #{game_data['game']['num_objects'] rescue '0'}"
+  $stderr.puts "  Messages: #{game_data['game']['num_messages'] rescue '0'}"
+  $stderr.puts "  Processes: #{game_data['game']['num_processes'] rescue '0'}"
+end

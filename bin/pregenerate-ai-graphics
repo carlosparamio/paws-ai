@@ -1,0 +1,65 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+
+STYLES = %w[pixelart cartoon realistic painting].freeze
+
+options = {
+  style: "pixelart",
+  force: false,
+}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: pregenerate-ai-graphics [options] <game_file.json|.sna|.z80|.sp>"
+
+  opts.on("--ai-graphics-style STYLE", STYLES, "AI graphics style: pixelart, cartoon, realistic, or painting") do |style|
+    options[:style] = style
+  end
+
+  opts.on("--force", "Regenerate images even when cache files already exist") do
+    options[:force] = true
+  end
+
+  opts.on("--cache-root PATH", "Cache root directory (default: cache/)") do |path|
+    options[:cache_root] = path
+  end
+
+  opts.on("-m", "--mapping PATH", "Path to character mapping JSON file for snapshot extraction") do |path|
+    options[:mapping] = path
+  end
+end.parse!
+
+game_file = ARGV[0]
+if game_file.nil?
+  warn "Error: No game file specified."
+  warn "Usage: pregenerate-ai-graphics [options] <game_file.json|.sna|.z80|.sp>"
+  exit 1
+end
+
+unless File.exist?(game_file)
+  warn "Error: File not found: #{game_file}"
+  exit 1
+end
+
+begin
+  require_relative "../lib/paws"
+  require_relative "../lib/paws/web/ai_graphics_pregenerator"
+  PAWS::EnvLoader.load
+
+  pregenerator = PAWS::Web::AIGraphicsPregenerator.new(
+    game_path: game_file,
+    mapping: options[:mapping],
+    style: options[:style],
+    cache_root: options[:cache_root] || PAWS::Web::AIGraphicsPregenerator::CACHE_ROOT,
+    force: options[:force],
+    logger: ->(message) { warn(message) },
+  )
+
+  summary = pregenerator.run
+  puts "AI graphics pregeneration complete: #{summary[:generated]} generated, #{summary[:skipped]} cached, #{summary[:failed]} failed, #{summary[:total]} total."
+  exit(summary[:failed].positive? ? 1 : 0)
+rescue StandardError => e
+  warn "Error: #{e.message}"
+  exit 1
+end

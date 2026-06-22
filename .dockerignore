@@ -1,0 +1,32 @@
+# Git / local agent / IDE state
+.git/
+.bundle/
+
+# Local secrets (only the example is shipped)
+.env
+.env.*
+!.env.example
+
+# AI agents data
+.agents/
+opencode.json
+
+# Local runtime / build artifacts
+coverage/
+cache/
+tmp/
+log/
+zesarux_*
+
+# Copyrighted ZX Spectrum game files. By default the user's `games/`
+# directory is ignored so private collections do not leak into the
+# image. The bundled "El Espía" example is whitelisted below so the
+# image can boot straight into a working game.
+games/*
+!games/espia*
+
+# Tooling / build artifacts
+*.gem
+*.log
+Dockerfile*
+.dockerignore

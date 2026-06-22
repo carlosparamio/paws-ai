@@ -1,0 +1,24 @@
+PAWS-AI is developed and maintained by:
+
+  Carlos Alberto Paramio Danta — creator (2026–present)
+
+PAWS-AI is an interpreter for the original PAWS (Professional Adventure
+Writing System) engine by Graeme Yeandle and Tim Gilberts. It is a
+clean-room reimplementation and is not affiliated with the original
+authors.
+
+Special thanks
+--------------
+
+  Carlos Sánchez (Uto)
+      For patiently helping to untangle a few small mysteries about the
+      internal and undocumented behaviour of the original PAWS engine.
+
+Contributing
+------------
+
+If you send a patch, a bug report with a reproducible test, or a
+documentation improvement, feel free to add your own line below this
+point (in alphabetical order, one entry per person):
+
+  Name <email-or-handle>  — short description of the contribution, year

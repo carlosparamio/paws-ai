@@ -1,0 +1,18 @@
+5 Intruder forcing door?
+6 Taxi movement state?
+7 Phone call status?
+60 Clock: Day?
+61 Clock: Hour?
+62 Clock: Minute?
+63 Ammunition (Bullets)
+64 Don's Location (NPC Don)
+66 Don's following status
+67 Crisis status / Help needed?
+68 Found telescope lens?
+69 Frank's Location (NPC Frank tracker)
+70 Exit door status (Jardín)
+71 Secret passage status
+72 Taxi's Location
+73 Taxi fare pending?
+74 Phone receiver status
+75 Phone booth encounter status

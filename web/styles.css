@@ -1,0 +1,290 @@
+:root {
+  color-scheme: dark;
+  --paper: #000;
+  --ink: #00e000;
+  --prompt: #f4e400;
+  --debug: #55b7ff;
+  --error: #ff6868;
+  --visible-height: 96;
+  --screen-height: 96;
+  --text-font-size: clamp(18px, 3.1vw, 32px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Courier New", Courier, monospace;
+}
+
+.game-shell {
+  position: relative;
+  width: 100vw;
+  height: 100dvh;
+  margin: 0 auto;
+  display: grid;
+  grid-template-rows: minmax(128px, min(52dvh, calc(100vw * var(--visible-height) / 256))) minmax(0, 1fr) auto;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.debug-pause-overlay {
+  position: absolute;
+  z-index: 20;
+  top: clamp(10px, 2vw, 18px);
+  right: clamp(10px, 2vw, 18px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(360px, calc(100vw - 20px));
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--debug), white 22%);
+  background: color-mix(in srgb, #05070a, transparent 14%);
+  color: #d8f3ff;
+  box-shadow: 0 12px 34px rgb(0 0 0 / 0.36);
+  font-size: 14px;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+.debug-pause-overlay[hidden] {
+  display: none;
+}
+
+.debug-pause-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid #ff6868;
+  background:
+    linear-gradient(90deg, transparent 0 35%, #ff6868 35% 65%, transparent 65%),
+    linear-gradient(0deg, transparent 0 35%, #ff6868 35% 65%, transparent 65%);
+}
+
+.game-shell.no-graphics {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.game-shell.screen-full {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.game-shell.screen-full .output-pane {
+  display: none;
+}
+
+.game-shell.pc-key-full {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.game-shell.pc-key-full .output-pane {
+  display: none;
+}
+
+.graphics-pane {
+  min-height: 0;
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  overflow: hidden;
+  padding: 10px 0 0;
+  position: relative;
+}
+
+.graphics-pane[hidden] {
+  display: none;
+}
+
+.graphics-pane.tall {
+  padding-top: 0;
+}
+
+#screen {
+  grid-area: 1 / 1;
+  display: block;
+  width: 256px;
+  height: var(--screen-height-px, 96px);
+  object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: var(--paper);
+}
+
+.ai-screen {
+  grid-area: 1 / 1;
+  display: block;
+  width: 256px;
+  height: var(--screen-height-px, 96px);
+  object-fit: cover;
+  object-position: center;
+  background: var(--paper);
+}
+
+.ai-screen[hidden] {
+  display: none;
+}
+
+.screen-text {
+  grid-area: 1 / 1;
+  position: relative;
+  align-self: end;
+  justify-self: center;
+  aspect-ratio: 256 / var(--screen-height);
+  width: 256px;
+  height: var(--screen-height-px, 96px);
+  pointer-events: none;
+  font-family: "Courier New", Courier, monospace;
+  font-size: var(--screen-cell-height, 8px);
+  line-height: 1;
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.screen-text-line {
+  position: absolute;
+  left: calc(var(--col) * var(--screen-cell-width, 8px));
+  top: calc(var(--row) * var(--screen-cell-height, 8px));
+  white-space: pre;
+  transform-origin: left top;
+}
+
+.screen-paper-run {
+  display: inline-block;
+  height: var(--screen-cell-height, 8px);
+  vertical-align: top;
+}
+
+.output-pane {
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.transcript {
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-color: #164f16 #000;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--text-font-size);
+  line-height: 0.92;
+  letter-spacing: 0;
+}
+
+.inline-spectrum-glyph {
+  display: inline-block;
+  width: 0.92em;
+  height: 0.92em;
+  margin: 0 0.02em;
+  vertical-align: -0.08em;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.screen-text .inline-spectrum-glyph {
+  width: var(--screen-cell-width, 8px);
+  height: var(--screen-cell-height, 8px);
+  margin: 0;
+  vertical-align: top;
+}
+
+.glyph-text-fallback {
+  display: inline;
+  font-size: 0;
+  line-height: 0;
+  color: transparent;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.spectrum-flash {
+  animation: spectrum-flash 1s steps(1, end) infinite;
+}
+
+@keyframes spectrum-flash {
+  50% {
+    opacity: 0;
+  }
+}
+
+.debug-line {
+  color: var(--debug);
+  font-size: 0.72em;
+  line-height: 1.15;
+}
+
+.error-line {
+  color: var(--error);
+}
+
+.prompt-echo {
+  color: var(--prompt);
+}
+
+.prompt-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.28em;
+  padding: 0 0 clamp(12px, 3vh, 30px);
+  color: var(--prompt);
+  font-size: var(--text-font-size);
+  line-height: 1;
+}
+
+.prompt-row.waiting-key {
+  display: none;
+}
+
+.prompt-row.waiting-key .prompt-mark {
+  display: none;
+}
+
+.game-shell[data-text-renderer="spectrum"] .prompt-row {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.prompt-mark {
+  color: var(--prompt);
+}
+
+#commandInput {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--prompt);
+  caret-color: var(--prompt);
+  font: inherit;
+  letter-spacing: 0;
+}
+
+#commandInput::placeholder {
+  color: color-mix(in srgb, var(--prompt), transparent 40%);
+  opacity: 1;
+}
+
+@media (max-height: 620px) {
+  :root {
+    --text-font-size: clamp(16px, 2.8vw, 24px);
+  }
+}

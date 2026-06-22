@@ -1,0 +1,173 @@
+#!/usr/bin/env ruby
+require 'json'
+require 'optparse'
+require_relative '../lib/paws'
+require_relative '../lib/paws/debug/remote_server'
+
+PARSER_MODES = %w[original ai].freeze
+
+options = {
+  colors: false,
+  verbosity: 0,
+  skip_clear_screen: false,
+  parser_mode: "original",
+  debug_bind: "127.0.0.1",
+  debug_port: nil
+}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: play [options] <game_file.json|.sna>"
+
+  opts.on("-C", "--colors", "Enable Spectrum-style colors") do
+    options[:colors] = true
+  end
+
+  opts.on("-v", "--verbose", "Increase verbosity level (can be used up to 3 times)") do
+    options[:verbosity] += 1
+  end
+
+  opts.on("-S", "--skip-clear-screen", "Prevent clearing the terminal (CLS)") do
+    options[:skip_clear_screen] = true
+  end
+
+  opts.on("-B", "--breakpoints-file PATH", "Path to a file containing breakpoints (e.g., P1B5, F8=7)") do |path|
+    options[:breakpoints_file] = path
+  end
+
+  opts.on("-F", "--flags-desc-file PATH", "Load flag descriptions from a text file") do |path|
+    options[:flags_desc_file] = path
+  end
+
+  opts.on("-P", "--parser-mode MODE", PARSER_MODES, "Parser mode: original or ai (default: original)") do |mode|
+    options[:parser_mode] = mode
+  end
+  
+  opts.on("-d", "--debug", "Start game in debugger stepping mode (stops at first condact)") do
+    options[:debug] = true
+  end
+
+  opts.on("--debug-bind HOST", "Bind host for remote debugger (default: 127.0.0.1)") do |host|
+    options[:debug_bind] = host
+  end
+
+  opts.on("--debug-port PORT", Integer, "Serve remote debugger on PORT") do |port|
+    options[:debug_port] = port
+  end
+
+  opts.on("-H", "--history-size N", Integer, "Max state history snapshots in debug mode (default: 200)") do |n|
+    options[:history_size] = n
+  end
+
+  opts.on("-R", "--record-commands PATH", "Write player commands, one per line, for later autoplay") do |path|
+    options[:record_commands] = path
+  end
+
+  opts.on("-T", "--transcript PATH", "Write visible text transcript without graphics") do |path|
+    options[:transcript] = path
+  end
+
+  opts.on("-a", "--autoplay PATH[:RANGE]", "Read player commands from a command-history file") do |path|
+    options[:autoplay] = path
+  end
+
+  opts.on("-m", "--mapping PATH", "Path to character mapping JSON file for snapshot extraction") do |path|
+    options[:mapping] = path
+  end
+end.parse!
+
+ai_parser_enabled = options[:parser_mode] == "ai"
+remote_debug_enabled = !options[:debug_port].nil?
+debug_enabled = options[:debug] || remote_debug_enabled
+
+if ai_parser_enabled
+  PAWS::EnvLoader.load
+  PAWS::AIParserConfiguration.from_env
+end
+
+game_file = ARGV[0]
+if game_file.nil?
+  puts "Error: No game file specified."
+  exit 1
+end
+
+unless File.exist?(game_file)
+  puts "Error: File not found: #{game_file}"
+  exit 1
+end
+
+begin
+  debug_server = nil
+
+  ext = File.extname(game_file).downcase
+  game_data = if ext == '.json'
+                JSON.parse(File.read(game_file))
+              elsif ['.sna', '.z80', '.sp'].include?(ext)
+                PAWS::Extractor.new(mapping: options[:mapping]).extract(game_file)
+              else
+                raise "Unsupported file format: #{ext}"
+              end
+
+  if options[:autoplay]
+    options[:autoplay], options[:autoplay_range] = PAWS::AutoplayScript.parse_cli_spec(
+      options[:autoplay],
+      range: options[:autoplay_range],
+    )
+  end
+  
+  interface = PAWS::CLIInterface.new(
+    colors_enabled: options[:colors],
+    command_history_path: options[:record_commands],
+    transcript_path: options[:transcript],
+    autoplay_path: options[:autoplay],
+  )
+  interface.install_autoplay_commands(PAWS::AutoplayScript.load(options[:autoplay], range: options[:autoplay_range])) if options[:autoplay_range]
+  
+  if options[:skip_clear_screen]
+    interface.output_debug("Skip clear screen option is ENABLED", 1)
+  end
+  
+  engine_opts = {
+    verbosity: options[:verbosity],
+    breakpoints_file: options[:breakpoints_file],
+    skip_clear_screen: options[:skip_clear_screen],
+    flags_desc_file: options[:flags_desc_file],
+    ai_enabled: ai_parser_enabled,
+    debug_mode: debug_enabled
+  }
+  engine_opts[:history_size] = options[:history_size] if options[:history_size]
+
+  engine = PAWS::Engine.new(game_data, interface, **engine_opts)
+
+  if remote_debug_enabled
+    debug_logger = ->(message) { warn(message) if options[:verbosity].positive? }
+    debug_registry = PAWS::Debug::RemoteRegistry.new
+    debug_server = PAWS::Debug::RemoteServer.new(registry: debug_registry, logger: debug_logger)
+    debug_server.start_async(port: options[:debug_port], bind: options[:debug_bind])
+    controller = PAWS::Debug::RemoteController.new(
+      engine,
+      id: "cli",
+      game_name: File.basename(game_file, File.extname(game_file)),
+      logger: debug_logger,
+    )
+    debug_registry.register(controller)
+    engine.debugger.remote_controller = controller
+    engine.stepping = false unless options[:debug]
+    warn "PAWS remote debugger: http://#{options[:debug_bind]}:#{options[:debug_port]}"
+  end
+
+  engine.run
+rescue Interrupt
+  puts "\nBye!"
+rescue StandardError => e
+  if defined?(interface) && interface
+    interface.output_text("Error: #{e.message}")
+  else
+    puts "Error: #{e.message}"
+  end
+  # For debugging, let's show the backtrace if it's not a simple file error
+  unless e.message.include?("File not found") || e.message.include?("No game file")
+    puts e.backtrace.first(5).join("\n")
+  end
+ensure
+  debug_server&.shutdown
+end

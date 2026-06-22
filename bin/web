@@ -1,0 +1,197 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Docker (and any other non-TTY consumer like `2>&1 | head`) buffers Ruby's
+# stdout in chunks, so log lines look like they never appear until the
+# process exits. Force line-buffering so the web server is observable
+# from the moment the listen socket is open.
+$stdout.sync = true
+$stderr.sync = true
+
+require "optparse"
+require_relative "../lib/paws"
+require_relative "../lib/paws/debug/remote_server"
+require_relative "../lib/paws/web/app"
+
+TEXT_RENDERERS = %w[pc spectrum].freeze
+GRAPHICS_MODES = %w[original ai-painting ai-pixelart ai-realistic ai-cartoon disabled].freeze
+PARSER_MODES = %w[original ai].freeze
+
+def parse_text_renderer_spec(spec)
+  mode, separator, font_size = spec.to_s.partition(":")
+  raise OptionParser::InvalidArgument, "--text-renderer must be one of: #{TEXT_RENDERERS.join(", ")}" unless TEXT_RENDERERS.include?(mode)
+  return [mode, nil] if separator.empty?
+
+  raise OptionParser::InvalidArgument, "--text-renderer font size must be a positive integer" unless font_size.match?(/\A[1-9]\d*\z/)
+
+  [mode, font_size.to_i]
+end
+
+options = {
+  bind: "127.0.0.1",
+  port: 4567,
+  debug_bind: "127.0.0.1",
+  debug_port: nil,
+  verbosity: 0,
+  skip_clear_screen: false,
+  debug: false,
+  parser_mode: "original",
+  graphics_mode: "original",
+  graphics_cache: false,
+  text_renderer: "pc",
+}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: web [options] <game_file.json|.sna|.z80|.sp>"
+
+  opts.on("-b", "--bind HOST", "Bind host (default: 127.0.0.1)") do |host|
+    options[:bind] = host
+  end
+
+  opts.on("-p", "--port PORT", Integer, "Port (default: 4567)") do |port|
+    options[:port] = port
+  end
+
+  opts.on("--debug-bind HOST", "Bind host for remote debugger (default: 127.0.0.1)") do |host|
+    options[:debug_bind] = host
+  end
+
+  opts.on("--debug-port PORT", Integer, "Serve remote debugger on PORT") do |port|
+    options[:debug_port] = port
+  end
+
+  opts.on("-v", "--verbose", "Increase verbosity level (can be used up to 3 times)") do
+    options[:verbosity] += 1
+  end
+
+  opts.on("-S", "--skip-clear-screen", "Prevent clearing the web transcript/screen on CLS") do
+    options[:skip_clear_screen] = true
+  end
+
+  opts.on("-B", "--breakpoints-file PATH", "Path to a file containing breakpoints (e.g., P1B5, F8=7)") do |path|
+    options[:breakpoints_file] = path
+  end
+
+  opts.on("-F", "--flags-desc-file PATH", "Load flag descriptions from a text file") do |path|
+    options[:flags_desc_file] = path
+  end
+
+  opts.on("-P", "--parser-mode MODE", PARSER_MODES, "Parser mode: original or ai (default: original)") do |mode|
+    options[:parser_mode] = mode
+  end
+
+  opts.on("-g", "--graphics-mode MODE", GRAPHICS_MODES, "Graphics mode: original, ai-painting, ai-pixelart, ai-realistic, ai-cartoon, or disabled (default: original)") do |mode|
+    options[:graphics_mode] = mode
+  end
+
+  opts.on("-G", "--graphics-cache", "Use cached AI location graphics without generating missing images") do
+    options[:graphics_cache] = true
+  end
+
+  opts.on("-d", "--debug", "Enable web debugger commands such as !debug") do
+    options[:debug] = true
+  end
+
+  opts.on("-H", "--history-size N", Integer, "Max state history snapshots in debug mode") do |n|
+    options[:history_size] = n
+  end
+
+  opts.on("-r MODE[:FONT_SIZE]", "--text-renderer MODE[:FONT_SIZE]", "Screen text renderer: pc or spectrum, optional PC font size in px (default: pc)") do |mode|
+    mode, font_size = parse_text_renderer_spec(mode)
+    options[:text_renderer] = mode
+    options[:font_size] = font_size if font_size
+  end
+
+  opts.on("-R", "--record-commands PATH", "Write player commands, one per line, for later autoplay") do |path|
+    options[:record_commands] = path
+  end
+
+  opts.on("-T", "--transcript PATH", "Write visible text transcript without graphics") do |path|
+    options[:transcript] = path
+  end
+
+  opts.on("-a", "--autoplay PATH[:RANGE]", "Read player commands from a command-history file") do |path|
+    options[:autoplay] = path
+  end
+
+  opts.on("-m", "--mapping PATH", "Path to character mapping JSON file for snapshot extraction") do |path|
+    options[:mapping] = path
+  end
+end.parse!
+
+ai_parser_enabled = options[:parser_mode] == "ai"
+ai_graphics_enabled = options[:graphics_mode].start_with?("ai-")
+remote_debug_enabled = !options[:debug_port].nil?
+debug_enabled = options[:debug] || remote_debug_enabled
+
+if ai_parser_enabled || ai_graphics_enabled
+  PAWS::EnvLoader.load
+  PAWS::AIParserConfiguration.from_env if ai_parser_enabled
+end
+
+game_file = ARGV[0]
+if game_file.nil?
+  warn "Error: No game file specified."
+  warn "Usage: web [options] <game_file.json|.sna|.z80|.sp>"
+  exit 1
+end
+
+unless File.exist?(game_file)
+  warn "Error: File not found: #{game_file}"
+  exit 1
+end
+
+engine_options = {
+  verbosity: options[:verbosity],
+  breakpoints_file: options[:breakpoints_file],
+  skip_clear_screen: options[:skip_clear_screen],
+  flags_desc_file: options[:flags_desc_file],
+  ai_enabled: ai_parser_enabled,
+  debug_mode: debug_enabled,
+}
+engine_options[:history_size] = options[:history_size] if options[:history_size]
+
+session_options = {
+  command_history_path: options[:record_commands],
+  transcript_path: options[:transcript],
+  autoplay_path: options[:autoplay],
+  text_renderer: options[:text_renderer],
+  graphics_cache: options[:graphics_cache],
+  graphics_mode: options[:graphics_mode],
+  font_size: options[:font_size],
+}
+
+if options[:autoplay]
+  options[:autoplay], options[:autoplay_range] = PAWS::AutoplayScript.parse_cli_spec(
+    options[:autoplay],
+    range: options[:autoplay_range],
+  )
+  session_options[:autoplay_path] = options[:autoplay]
+  session_options[:autoplay_range] = options[:autoplay_range]
+end
+
+debug_server = nil
+debug_registry = nil
+debug_logger = ->(message) { warn(message) if options[:verbosity].positive? }
+
+begin
+  if remote_debug_enabled
+    debug_registry = PAWS::Debug::RemoteRegistry.new
+    debug_server = PAWS::Debug::RemoteServer.new(registry: debug_registry, logger: debug_logger)
+    debug_server.start_async(port: options[:debug_port], bind: options[:debug_bind])
+    puts "PAWS remote debugger: http://#{options[:debug_bind]}:#{options[:debug_port]}"
+  end
+
+  app = PAWS::Web::App.new(
+    game_path: game_file,
+    mapping: options[:mapping],
+    engine_options: engine_options,
+    session_options: session_options,
+    debug_registry: debug_registry,
+    debug_logger: debug_logger,
+  )
+  puts "PAWS web UI: http://#{options[:bind]}:#{options[:port]}"
+  app.start(port: options[:port], bind: options[:bind])
+ensure
+  debug_server&.shutdown
+end
