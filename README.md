@@ -20,6 +20,16 @@ the right, the same scenes regenerated with the `ai-painting` graphics mode.
 | ![Firfurcio — original 2](games/screenshots/orig_02.png) | ![Firfurcio — AI painting 2](games/screenshots/ai_02.jpg) |
 | ![Firfurcio — original 3](games/screenshots/orig_03.png) | ![Firfurcio — AI painting 3](games/screenshots/ai_03.jpg) |
 
+### Things — original vs. AI-enhanced graphics
+
+Two locations from the Spanish adventure **Things** rendered with PAWS-AI, in
+the same original-vs-`ai-painting` layout.
+
+| Original graphics (rendered by PAWS-AI) | AI-enhanced graphics (`ai-painting`) |
+|------------------------------------------|--------------------------------------|
+| ![Things — original 1](games/screenshots/orig_04.png) | ![Things — AI painting 1](games/screenshots/ai_04.jpg) |
+| ![Things — original 2](games/screenshots/orig_05.png) | ![Things — AI painting 2](games/screenshots/ai_05.jpg) |
+
 ## Features
 
 - **Drop-in interpreter for PAWS snapshots.** Loads `.sna`, `.z80`, `.sp`
