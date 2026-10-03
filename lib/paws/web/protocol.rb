@@ -43,13 +43,14 @@ module PAWS
         }
       end
 
-      def screen_charset(active:, charsets:, udgs: nil)
+      def screen_charset(active:, charsets:, udgs: nil, metadata: nil)
         event = {
           "type" => "screen.charset",
           "active" => active,
           "charsets" => charsets,
         }
         event["udgs"] = udgs if udgs
+        event["metadata"] = metadata if metadata
         event
       end
 

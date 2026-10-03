@@ -212,6 +212,10 @@ body {
   animation: spectrum-flash 1s steps(1, end) infinite;
 }
 
+.spectrum-italic {
+  font-style: italic;
+}
+
 @keyframes spectrum-flash {
   50% {
     opacity: 0;

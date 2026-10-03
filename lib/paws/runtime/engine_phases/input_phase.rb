@@ -8,7 +8,7 @@ module PAWS
   # PAWS timeouts/prompts, expands one physical line into queued logical
   # phrases, and delegates the actual vocabulary parsing back to Engine.
   class InputPhase
-    PHRASE_SPLIT_PATTERN = /[\.]|\s+[ye]\s+|\s+and\s+/i
+    DEFAULT_CONNECTORS = %w[y e and].freeze
     TIMEOUT_INTERVAL_SECONDS = 1.28
     TIMEOUT_OCCURRED_BIT = 0x80
     TIMEOUT_INPUT_FIRST_CHAR_BIT = 0x01
@@ -105,7 +105,21 @@ module PAWS
     end
 
     def split_phrases(input)
-      input.split(PHRASE_SPLIT_PATTERN).map(&:strip).reject(&:empty?)
+      input.split(phrase_split_pattern).map(&:strip).reject(&:empty?)
+    end
+
+    def phrase_split_pattern
+      @phrase_split_pattern ||= build_phrase_split_pattern
+    end
+
+    def build_phrase_split_pattern
+      words = DEFAULT_CONNECTORS.dup
+      if engine&.game_data_repository&.vocabulary
+        connectors = engine.game_data_repository.vocabulary.select { |e| e["type_id"].to_i == 5 }
+        words += connectors.map { |e| e["word"].to_s.downcase }.reject(&:empty?)
+      end
+      words = words.uniq.sort_by { |w| -w.length }
+      Regexp.new("[,\\.;]+|\\s+(?:#{words.map { |w| Regexp.escape(w) }.join('|')})\\s+", Regexp::IGNORECASE)
     end
 
     def reset_line_verb

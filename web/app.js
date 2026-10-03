@@ -29,6 +29,7 @@ let screenTextCharsetId = null;
 let positionedScreenTextCharsetId = null;
 let charsetBanks = {};
 let charsetBankIds = [];
+let charsetMetadata = {};
 let udgGlyphs = {};
 let screenCursor = { row: 0, col: 0 };
 let lineInputOrigin = null;
@@ -209,7 +210,9 @@ function renderLayoutControlTags(text) {
 
 function appendInlineGlyph(parent, byte, fallback, style) {
   const fallbackChar = fallback[0] || " ";
-  const forceGlyph = style.charset != null && style.charset !== defaultTextCharsetId;
+  const charsetInfo = getCharsetInfo(style.charset);
+  const isUdg = Number(byte) >= 144;
+  const forceGlyph = !charsetInfo.isText || isUdg;
   if (!forceGlyph && !shouldRenderInlineGlyph(fallbackChar)) {
     appendStyledText(parent, fallbackChar, style);
     return;
@@ -275,7 +278,8 @@ function shouldRenderInlineGlyph(char) {
 function appendStyledText(parent, text, style) {
   if (!text) return;
 
-  if (style.charset != null && style.charset !== defaultTextCharsetId) {
+  const charsetInfo = getCharsetInfo(style.charset);
+  if (!charsetInfo.isText) {
     appendCharsetText(parent, text, style);
     return;
   }
@@ -283,6 +287,10 @@ function appendStyledText(parent, text, style) {
   const span = document.createElement("span");
   const cleanText = renderLayoutControlTags(text).replace(/\{[^}]+\}/g, "");
   span.textContent = cleanText;
+
+  if (charsetInfo.isItalic) {
+    span.classList.add("spectrum-italic");
+  }
 
   const inkPalette = style.bright ? brightSpectrumColors : spectrumColors;
   if (style.ink && inkPalette[style.ink]) {
@@ -596,39 +604,52 @@ function drawScreenText(event) {
   let row = startRow;
   let col = Number(event.col || 0);
 
-  parseRichSegments(event.text || "", defaultStyle).forEach((segment) => {
+  const segments = parseRichSegments(event.text || "", defaultStyle);
+  const allTokens = [];
+  for (const segment of segments) {
     for (const token of screenTextTokens(segment.text)) {
-      const char = token.char;
-      if (char === "\r") continue;
-      if (char === "\n") {
-        clearScreenCells(row, col, 32, segment.style);
-        row += 1;
-        col = 0;
-        continue;
-      }
-
-      if (col >= 32) {
-        row += 1;
-        col = 0;
-      }
-      while (row >= 24) {
-        scrollTextWindow(defaultStyle);
-        row -= 1;
-      }
-
-      drawScreenChar(char, row, col, segment.style, token.byte);
-      col += 1;
+      if (token.char === "\r") continue;
+      allTokens.push({ token, style: segment.style });
     }
-  });
+  }
 
-  if (event.newline !== false) {
-    clearScreenCells(row, col, 32, finalRichStyle(event.text || "", defaultStyle));
-    row += 1;
-    col = 0;
+  for (let i = 0; i < allTokens.length; i += 1) {
+    const { token, style } = allTokens[i];
+    const char = token.char;
+    if (char === "\n") {
+      clearScreenCells(row, col, 32, style);
+      const hasMoreChars = allTokens.slice(i + 1).some((item) => item.token.char !== "\n" && item.token.char !== "\r");
+      if (hasMoreChars) {
+        row += 1;
+        col = 0;
+        while (row >= 24) {
+          scrollTextWindow(defaultStyle);
+          row -= 1;
+        }
+      } else {
+        row = Math.min(23, row + 1);
+        col = 0;
+      }
+      continue;
+    }
+
+    if (col >= 32) {
+      row += 1;
+      col = 0;
+    }
     while (row >= 24) {
       scrollTextWindow(defaultStyle);
       row -= 1;
     }
+
+    drawScreenChar(char, row, col, style, token.byte);
+    col += 1;
+  }
+
+  if (event.newline !== false) {
+    clearScreenCells(row, col, 32, finalRichStyle(event.text || "", defaultStyle));
+    row = Math.min(23, row + 1);
+    col = 0;
   }
 
   const finalCharset = finalRichStyle(event.text || "", defaultStyle).charset;
@@ -678,7 +699,8 @@ function drawMirroredInput(text) {
     if (index < inputText.length) {
       drawScreenChar(inputText[index], row, col, textStyle);
     } else if (index === inputText.length) {
-      drawScreenChar("?", row, col, cursorStyle, lineInputCursorGlyph);
+      const cursorChar = lineInputCursorGlyph == null ? "_" : "?";
+      drawScreenChar(cursorChar, row, col, cursorStyle, lineInputCursorGlyph);
     } else {
       drawScreenChar(" ", row, col, textStyle);
     }
@@ -881,27 +903,26 @@ function clearTextWindow(frame, width, visibleHeight) {
 }
 
 function scrollTextWindow(style = currentScreenStyle) {
-  if (textWindowStartRow == null || canvas.height < 192) return;
+  const startRow = textWindowStartRow == null ? 0 : textWindowStartRow;
+  if (canvas.height < 192) return;
 
-  const y = Math.max(0, Math.min(canvas.height, textWindowStartRow * 8));
+  const y = Math.max(0, Math.min(canvas.height, startRow * 8));
   const lineHeight = 8;
   const copyHeight = canvas.height - y - lineHeight;
-  if (copyHeight > 0) {
-    ctx.drawImage(canvas, 0, y + lineHeight, canvas.width, copyHeight, 0, y, canvas.width, copyHeight);
-  }
-  ctx.fillStyle = cssColorFor(style.paper || "black", false, "#000000");
-  ctx.fillRect(0, canvas.height - lineHeight, canvas.width, lineHeight);
-
   ensureSpectrumFramebuffer(canvas.width, canvas.height);
   if (copyHeight > 0) {
+    const imageData = ctx.getImageData(0, y + lineHeight, canvas.width, copyHeight);
+    ctx.putImageData(imageData, 0, y);
     for (let py = y; py < y + copyHeight; py += 1) {
       spectrumBitmapRows[py] = spectrumBitmapRows[py + lineHeight].slice();
     }
-    for (let ay = textWindowStartRow; ay < 23; ay += 1) {
+    for (let ay = startRow; ay < 23; ay += 1) {
       spectrumFrameAttributes[ay] = spectrumFrameAttributes[ay + 1].map((attr) => ({ ...attr }));
     }
   }
   const blankAttr = styleToFrameAttribute(style || {});
+  ctx.fillStyle = cssColorFor(style.paper || "black", false, "#000000");
+  ctx.fillRect(0, canvas.height - lineHeight, canvas.width, lineHeight);
   for (let py = canvas.height - lineHeight; py < canvas.height; py += 1) {
     spectrumBitmapRows[py].fill(false);
   }
@@ -969,6 +990,40 @@ function charsetBankFor(charsetId) {
   return charsetBanks[String(wrappedId)] || null;
 }
 
+function getCharsetInfo(charsetId) {
+  if (charsetId == null || charsetId === defaultTextCharsetId) {
+    return { isText: true, isItalic: false };
+  }
+
+  const idStr = String(charsetId);
+  const meta = (charsetMetadata && (charsetMetadata[idStr] || charsetMetadata[Number(charsetId)])) || null;
+  if (meta) {
+    const isText = meta.type === "text" || meta.is_text === true || meta.isText === true || meta.italic === true || meta.style === "italic";
+    const isItalic = meta.italic === true || meta.style === "italic" || meta.type === "italic";
+    return { isText, isItalic };
+  }
+
+  const bank = charsetBankFor(charsetId);
+  if (!bank) {
+    return { isText: true, isItalic: false };
+  }
+
+  let letterCount = 0;
+  for (let code = 65; code <= 90; code += 1) {
+    const glyph = bank[String(code)];
+    if (glyph && glyphHasInk(glyph)) letterCount += 1;
+  }
+  for (let code = 97; code <= 122; code += 1) {
+    const glyph = bank[String(code)];
+    if (glyph && glyphHasInk(glyph)) letterCount += 1;
+  }
+
+  const isText = letterCount >= 20;
+  const isItalic = isText && Number(charsetId) === 2;
+
+  return { isText, isItalic };
+}
+
 function applyScreenCharset(event) {
   activeCharsetId = event.active == null ? null : Number(event.active);
   defaultTextCharsetId = activeCharsetId;
@@ -977,6 +1032,7 @@ function applyScreenCharset(event) {
   positionedScreenTextCharsetId = activeCharsetId;
   charsetBanks = {};
   charsetBankIds = [];
+  charsetMetadata = event.metadata || {};
   udgGlyphs = event.udgs && event.udgs.glyphs ? event.udgs.glyphs : {};
 
   const entries = event.charsets && Array.isArray(event.charsets.entries)
@@ -1271,6 +1327,7 @@ function setInputMode(mode, prompt = "> ", timeoutMs = null, event = {}) {
         row: event.screen_row == null ? screenCursor.row : Number(event.screen_row),
         col: event.screen_col == null ? screenCursor.col : Number(event.screen_col),
       };
+      clearScreenCells(lineInputOrigin.row, lineInputOrigin.col, 32, currentScreenStyle);
       drawMirroredInput("");
     }
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) {

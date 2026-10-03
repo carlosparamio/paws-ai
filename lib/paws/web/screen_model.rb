@@ -32,6 +32,12 @@ module PAWS
       end
 
       def frame_with_text_window(frame, graphics_line:, ink:, paper:)
+        if frame.nil?
+          @text_window_start_row = 0
+          @cursor = { row: 0, col: 0 }
+          return [nil, @cursor.dup]
+        end
+
         start_row = text_start_row(frame, graphics_line: graphics_line)
         return [frame, nil] unless start_row
 
@@ -46,6 +52,28 @@ module PAWS
         @cursor = { row: start_row, col: 0 }
 
         [prepared, @cursor.dup]
+      end
+
+      def blank_frame_with_text_window(graphics_line: nil, ink: "white", paper: "black")
+        start_row = graphics_line ? [graphics_line.to_i, 0].max : 0
+        start_row = [start_row, ROWS - 1].min
+
+        frame = {
+          "type" => "screen.frame",
+          "picture_id" => nil,
+          "logical_width" => COLUMNS * CELL_SIZE,
+          "logical_height" => ROWS * CELL_SIZE,
+          "visible_height" => ROWS * CELL_SIZE,
+          "full_screen" => true,
+          "text_window_start_row" => start_row,
+          "text_window_ink" => ink || "white",
+          "text_window_paper" => paper || "black",
+        }
+
+        @text_window_start_row = start_row
+        @cursor = { row: start_row, col: 0 }
+
+        [frame, @cursor.dup]
       end
 
       def text_start_row(frame, graphics_line:)
@@ -187,6 +215,7 @@ module PAWS
       def newline_cursor
         @cursor[:row] += 1
         @cursor[:col] = 0
+        @cursor[:row] = ROWS - 1 if @cursor[:row] >= ROWS
       end
     end
   end

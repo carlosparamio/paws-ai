@@ -323,7 +323,6 @@ module PAWS
       # Nouns with ID < 20 are convertible directions (NUM_CONVERTIBLE_NOUNS).
       if @current_noun && @current_noun < 20
         @current_verb = @current_noun
-        @current_noun = 255 # _ (any).
       end
     end
 
@@ -546,7 +545,63 @@ module PAWS
         vocabulary: get_vocabulary_summary,
         response_table: get_process_intent_context(0),
         parse_response_table: get_parse_intent_context(0),
+        intent_index: get_full_intent_index,
       }
+    end
+
+    # Aggregates every unique VERB + NOUN pair that any process table in the
+    # game recognises, deduping across processes and merging the
+    # adjective/adverb/second-noun/preposition checks from every block that
+    # shares the same pair. Pure wildcard entries (verb=1/255 and noun=1/255
+    # simultaneously) are skipped: they are universal fall-throughs rather
+    # than concrete commands and would only add noise.
+    def get_full_intent_index
+      index = {}
+      processes = @game_data_repository["processes"]
+      return [] unless processes.is_a?(Array)
+
+      processes.each do |process|
+        next unless process.is_a?(Hash)
+
+        Array(process["entries"]).each do |entry|
+          verb_id = entry["verb"]
+          noun_id = entry["noun"]
+          next if pure_wildcard_pair?(verb_id, noun_id)
+
+          key = [verb_id, noun_id]
+          bucket = (index[key] ||= {
+            verb: verb_id,
+            noun: noun_id,
+            checks: [],
+          })
+          bucket[:checks].concat(scan_condacts_for_vocab(entry["condacts"]))
+        end
+      end
+
+      index.values.map do |bucket|
+        {
+          verb: vocabulary_word(bucket[:verb], 0),
+          noun: vocabulary_word(bucket[:noun], 2),
+          verb_aliases: vocabulary_words(bucket[:verb], 0),
+          noun_aliases: vocabulary_words(bucket[:noun], 2),
+          checks: dedupe_checks(bucket[:checks]),
+        }
+      end
+    end
+
+    def pure_wildcard_pair?(verb_id, noun_id)
+      [1, 0, 255].include?(verb_id.to_i) && [1, 0, 255].include?(noun_id.to_i)
+    end
+
+    def dedupe_checks(checks)
+      seen = {}
+      Array(checks).each do |check|
+        key = [check[:type], check[:id] || check[:word]]
+        next if seen[key]
+
+        seen[key] = check
+      end
+      seen.values
     end
 
     def get_visible_object_names
@@ -636,8 +691,10 @@ module PAWS
         name = c["name"].upcase
         params = c["params"] || []
         case name
-        when "ADJECT1", "ADJECT2"
-          words << { type: "adjective", word: vocabulary_word(params[0], 3), aliases: vocabulary_words(params[0], 3), id: params[0] }
+        when "ADJECT1"
+          words << { type: "adjective1", word: vocabulary_word(params[0], 3), aliases: vocabulary_words(params[0], 3), id: params[0] }
+        when "ADJECT2"
+          words << { type: "adjective2", word: vocabulary_word(params[0], 3), aliases: vocabulary_words(params[0], 3), id: params[0] }
         when "NOUN2"
           words << { type: "noun", word: vocabulary_word(params[0], 2), aliases: vocabulary_words(params[0], 2), id: params[0] }
         when "ADVERB"

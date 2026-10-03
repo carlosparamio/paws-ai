@@ -498,7 +498,7 @@ RSpec.describe PAWS::Engine do
 
       engine.parse_input("test")
       expect(engine.instance_variable_get(:@current_verb)).to eq(5)
-      expect(engine.instance_variable_get(:@current_noun)).to eq(255)
+      expect(engine.instance_variable_get(:@current_noun)).to eq(5)
       expect(engine.quoted_buffer).to eq("test")
     end
 
@@ -697,6 +697,67 @@ RSpec.describe PAWS::Engine do
       expect(context[:game_title]).to eq("PAWS Adventure")
       expect(context[:inventory]).to eq(["una llave"])
       expect(context[:vocabulary]).not_to be_empty
+      expect(context).to have_key(:intent_index)
+    end
+  end
+
+  describe "#get_full_intent_index" do
+    let(:process_entries) do
+      [
+        {
+          "verb" => 14, "verb_name" => "COGER", "noun" => 20, "noun_name" => "LLAVE",
+          "condacts" => [{ "opcode" => 16, "name" => "ADJECT1", "params" => [50] }],
+        },
+        {
+          "verb" => 14, "verb_name" => "COGER", "noun" => 20, "noun_name" => "LLAVE",
+          "condacts" => [{ "opcode" => 16, "name" => "ADJECT1", "params" => [50] }],
+        },
+        {
+          "verb" => 14, "verb_name" => "COGER", "noun" => 255, "noun_name" => "_",
+          "condacts" => [{ "opcode" => 17, "name" => "ADVERB", "params" => [60] }],
+        },
+        {
+          "verb" => 1, "verb_name" => "*", "noun" => 1, "noun_name" => "*",
+          "condacts" => [],
+        },
+      ]
+    end
+    let(:game_data) do
+      super().merge(
+        "vocabulary" => super()["vocabulary"] + [
+          { "word" => "ligero", "id" => 50, "type_id" => 3 },
+          { "word" => "rapido", "id" => 60, "type_id" => 1 },
+        ],
+        "processes" => [
+          { "id" => 0, "entries" => process_entries.first(2) },
+          { "id" => 2, "entries" => process_entries[2..] },
+        ],
+      )
+    end
+
+    it "dedupes verb+noun pairs across processes" do
+      engine = described_class.new(game_data, interface)
+      index = engine.get_full_intent_index
+
+      pair_keys = index.map { |entry| [entry[:verb], entry[:noun]] }
+      expect(pair_keys).to contain_exactly(["COGER", "LLAVE"], ["COGER", "_"])
+    end
+
+    it "merges adjective checks from every block that shares a pair" do
+      engine = described_class.new(game_data, interface)
+      index = engine.get_full_intent_index
+      take_llave = index.find { |entry| entry[:verb] == "COGER" && entry[:noun] == "LLAVE" }
+
+      expect(take_llave[:checks]).to contain_exactly(
+        hash_including(type: "adjective1", word: "LIGERO"),
+      )
+    end
+
+    it "skips fully wildcard entries" do
+      engine = described_class.new(game_data, interface)
+      index = engine.get_full_intent_index
+
+      expect(index.map { |entry| [entry[:verb], entry[:noun]] }).not_to include(["*", "*"])
     end
   end
 end

@@ -54,6 +54,11 @@ module PAWS
         next unless entry
 
         apply_entry(command, entry, context)
+
+        # Spanish verbal enclitics: -lo, -la, -los, -las (Z80 0x8277..0x8291)
+        if entry["type_id"] == 0 && word =~ /l[oa]s?$/i && command[:noun1].nil?
+          apply_pronoun(command, 6, context)
+        end
       end
 
       command.empty? ? nil : command

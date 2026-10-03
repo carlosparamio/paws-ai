@@ -229,6 +229,8 @@ module PAWS
         socket.write "HTTP/1.1 #{status} #{reason}\r\n"
         socket.write "Content-Type: #{content_type}\r\n"
         socket.write "Content-Length: #{body.bytesize}\r\n"
+        socket.write "Cache-Control: no-store, no-cache, must-revalidate\r\n"
+        socket.write "Pragma: no-cache\r\n"
         socket.write "Connection: close\r\n"
         socket.write "\r\n"
         socket.write body

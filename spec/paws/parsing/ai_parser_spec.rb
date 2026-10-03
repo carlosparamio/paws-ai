@@ -27,6 +27,7 @@ RSpec.describe PAWS::AIParser do
         { id: 20, word: "ANILL", type: 2 },
       ],
       response_table: [],
+      intent_index: [],
       is_nested: false,
     }
   end
@@ -179,6 +180,7 @@ RSpec.describe PAWS::AIParser do
         response_table: [
           { verb: "TOMA", noun: "ANILL", checks: [{ word: "LIGERO", type: "flag_check" }] },
         ],
+        intent_index: [],
       })
 
       expect(parser.parse(input, context: custom_context)).to be_nil

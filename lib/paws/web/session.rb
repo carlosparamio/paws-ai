@@ -218,10 +218,11 @@ module PAWS
       def initial_charset_events
         charsets = @game_data["charsets"]
         udgs = @game_data["udgs"]
+        metadata = @game_data.dig("charsets", "metadata") || @game_data["charsets_metadata"]
         return [] unless charsets || udgs
 
         active = @interface.active_charset || @game_data.dig("defaults", "charset")
-        [Protocol.screen_charset(active: active&.to_i, charsets: charsets, udgs: udgs)]
+        [Protocol.screen_charset(active: active&.to_i, charsets: charsets, udgs: udgs, metadata: metadata)]
       end
 
       def drain_with_prompt
@@ -385,11 +386,15 @@ module PAWS
       end
 
       def compose_location_picture_events(events, picture_events)
-        return events if picture_events.empty?
-        return events_with_picture_before_text(events, picture_events) unless compose_location_text_on_screen?
+        unless compose_location_text_on_screen?
+          return events if picture_events.empty?
+          return events_with_picture_before_text(events, picture_events)
+        end
 
+        existing_frame = events.find { |event| event["type"] == "screen.frame" }
+        frame_source = picture_events.first || existing_frame
         frame, cursor = @screen_model.frame_with_text_window(
-          picture_events.first,
+          frame_source,
           graphics_line: @interface.graphics_line,
           ink: @interface.colors[:ink],
           paper: @interface.colors[:paper],
@@ -399,14 +404,15 @@ module PAWS
         pause_before_text = pause_before_location_text_after_frame?
         bottom_row = pause_before_text ? 22 : 23
         frame_inserted = false
-        events.each_with_object([]) do |event, output|
+        events_to_process = existing_frame ? events.reject { |e| e.equal?(existing_frame) } : events
+        events_to_process.each_with_object([]) do |event, output|
           unless event["type"] == "text.append"
             output << event
             next
           end
 
           unless frame_inserted
-            output << frame
+            output << frame if frame
             output << Protocol.input_request(mode: "key", prompt: "") if pause_before_text
             frame_inserted = true
           end
@@ -419,12 +425,19 @@ module PAWS
             ),
           )
         end.tap do |output|
-          output << frame unless frame_inserted
+          output << frame if frame && !frame_inserted
           if @interface.respond_to?(:continue_screen_text_at)
-            @interface.continue_screen_text_at(
-              @screen_model.cursor.fetch(:row),
-              @screen_model.cursor.fetch(:col),
-            )
+            if frame
+              @interface.continue_screen_text_at(
+                @screen_model.cursor.fetch(:row),
+                @screen_model.cursor.fetch(:col),
+              )
+            elsif @interface.respond_to?(:screen_cursor) && @interface.screen_cursor
+              @screen_model.continue_at(
+                @interface.screen_cursor.fetch(:row),
+                @interface.screen_cursor.fetch(:col),
+              )
+            end
           end
         end
       end
@@ -556,7 +569,13 @@ module PAWS
         origin = @screen_input_origin
         @screen_input_origin = nil
         start_row = @screen_model.respond_to?(:text_window_start_row) ? @screen_model.text_window_start_row : nil
-        scroll_lines = start_row.nil? ? 0 : [origin.fetch(:row).to_i - start_row.to_i, 0].max
+        if start_row.nil? || start_row <= 0 || !firfurcio_arrow_prompt?
+          @screen_model.continue_at(origin.fetch(:row), origin.fetch(:col)) if @screen_model.text_window_active?
+          @interface.continue_screen_text_at(origin.fetch(:row), origin.fetch(:col))
+          return
+        end
+
+        scroll_lines = [origin.fetch(:row).to_i - start_row.to_i, 0].max
         if scroll_lines.positive?
           @interface.events << Protocol.screen_scroll(lines: scroll_lines)
           @screen_model.continue_at(start_row, origin.fetch(:col))
@@ -745,15 +764,20 @@ module PAWS
         end
         pause_before_bottom_prompt(events)
 
-        prompt_start = @screen_model.cursor.dup
         screen_prompt = screen_prompt_text(prompt)
-        if events.last && events.last["type"] == "screen.text" && events.last["text"].to_s.empty? && events.last["newline"] != false && events.last["col"].to_i.zero?
-          blank = events.pop
-          @screen_model.continue_at(blank.fetch("row"), blank.fetch("col", 0))
-          @interface.continue_screen_text_at(blank.fetch("row"), blank.fetch("col", 0)) if @interface.respond_to?(:continue_screen_text_at)
-          prompt_start = @screen_model.cursor.dup
+        last_event = events.last
+        if last_event && (
+             (last_event["type"] == "screen.text" && last_event["text"].to_s.empty? && last_event["newline"] != false && last_event["col"].to_i.zero?) ||
+             last_event["type"] == "screen.scroll"
+           )
+          if last_event["type"] == "screen.text"
+            blank = events.pop
+            @screen_model.continue_at(blank.fetch("row"), blank.fetch("col", 0))
+            @interface.continue_screen_text_at(blank.fetch("row"), blank.fetch("col", 0)) if @interface.respond_to?(:continue_screen_text_at)
+          end
           screen_prompt = screen_prompt.to_s.sub(/\A\n/, "")
         end
+
         event = @screen_model.append_text_event(
           { "type" => "text.append", "text" => screen_prompt, "newline" => false },
           colors: @interface.colors,
@@ -761,9 +785,13 @@ module PAWS
         return unless event
 
         events << event
+        prompt_row = @screen_model.cursor.fetch(:row)
+        cursor_col = @screen_model.cursor.fetch(:col).to_i
+        has_embedded_cursor = screen_prompt.include?("{glyph:144:") || screen_prompt.include?("{glyph:147:")
+        input_col = has_embedded_cursor ? [cursor_col - 1, 0].max : cursor_col
         @screen_input_origin = {
-          row: prompt_start.fetch(:row),
-          col: prompt_start.fetch(:col).to_i,
+          row: prompt_row,
+          col: input_col,
         }
         if @interface.respond_to?(:continue_screen_text_at)
           @interface.continue_screen_text_at(
@@ -884,6 +912,8 @@ module PAWS
       end
 
       def pause_before_bottom_prompt(events)
+        return unless firfurcio_arrow_prompt?
+
         row = @screen_model.cursor&.fetch(:row, 0).to_i
         location_frame_after_turn = @engine.state.turns.positive? && events.any? { |event| event["type"] == "screen.frame" }
         threshold = location_frame_after_turn ? 22 : 23
@@ -928,24 +958,45 @@ module PAWS
 
       def screen_prompt_text(prompt)
         text = prompt.to_s
-        return line_input_marker(default_prompt: true) if text.strip == ">"
+        if text.strip == ">"
+          if firfurcio_arrow_prompt?
+            style, reset = line_input_style_parts
+            return "#{style}{glyph:144:?}#{reset}"
+          elsif things_arrow_prompt?
+            style, reset = line_input_style_parts
+            return "#{style}{glyph:146:>}#{reset}"
+          else
+            style = style_tags(line_input_text_style)
+            reset = style.empty? ? "" : default_text_style_reset
+            return "#{style}>#{reset}"
+          end
+        end
 
         text.sub(/\n((?:\{[^}]+\})*) \z/) { "\n#{Regexp.last_match(1)}#{line_input_marker}" }
       end
 
+      def firfurcio_arrow_prompt?
+        @game_data.dig("udgs", "glyphs", "144") == [0, 240, 126, 255, 255, 126, 240, 0]
+      end
+
+      def things_arrow_prompt?
+        @game_data.dig("udgs", "glyphs", "146") == [128, 64, 32, 16, 16, 32, 64, 128]
+      end
+
       def line_input_marker(default_prompt: false)
         style, reset = line_input_style_parts
-        return "#{style}{glyph:144:?}#{reset}" if default_prompt && @game_data.dig("udgs", "glyphs", "144")
+        return "#{style}{glyph:144:?}#{reset}" if default_prompt && firfurcio_arrow_prompt?
 
-        marker = @game_data.dig("udgs", "glyphs", "146") ? "{glyph:146:?}" : "?"
+        marker = @game_data.dig("udgs", "glyphs", "146") ? "{glyph:146:?}" : ">"
         cursor = @game_data.dig("udgs", "glyphs", "147") ? "{glyph:147:_}" : "_"
         "#{style}#{marker}#{cursor}#{reset}"
       end
 
       def line_input_style_parts
-        style = @game_data.fetch("system_messages", [])[34].to_s
+        raw = @game_data.fetch("system_messages", [])[34].to_s
+        tags = raw.scan(/\{[^}]+\}/).join
         reset = +""
-        style = style.gsub(/{flash:0}/i) { reset << Regexp.last_match(0); "" }
+        style = tags.gsub(/{flash:0}/i) { reset << Regexp.last_match(0); "" }
         if style.match?(/{[0-5]}/)
           reset << "{#{@game_data.dig("defaults", "charset") || 0}}"
         end
@@ -959,13 +1010,18 @@ module PAWS
       end
 
       def line_input_cursor_style
-        style, = line_input_style_parts
-        @line_input_cursor_style ||= parse_style_tags(style)
+        if firfurcio_arrow_prompt?
+          style, = line_input_style_parts
+          @line_input_cursor_style ||= parse_style_tags(style)
+        else
+          @line_input_cursor_style ||= line_input_text_style.merge("flash" => false)
+        end
       end
 
       def line_input_cursor_glyph
-        return 144 if @game_data.dig("udgs", "glyphs", "144")
-        return 147 if @game_data.dig("udgs", "glyphs", "147")
+        return 144 if firfurcio_arrow_prompt?
+        return 147 if @game_data.dig("udgs", "glyphs", "147") == [0, 0, 0, 0, 0, 0, 0, 255]
+        return 144 if @game_data.dig("udgs", "glyphs", "144") == [0, 0, 0, 0, 0, 0, 0, 255]
 
         nil
       end

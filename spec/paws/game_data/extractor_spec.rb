@@ -64,7 +64,7 @@ RSpec.describe PAWS::Extractor do
 
     context "with things.sna graphics" do
       fixture_path = File.expand_path("../../../games/things.sna", __dir__)
-      skip "games/things.sna fixture is not available" unless File.exist?(fixture_path)
+      before { skip "games/things.sna fixture is not available" unless File.exist?(fixture_path) }
 
       let(:fixture_path) { fixture_path }
       let(:data) { extractor.extract(fixture_path) }
@@ -119,7 +119,7 @@ RSpec.describe PAWS::Extractor do
 
     context "with firfurcio.sna PAW v1 graphics" do
       fixture_path = File.expand_path("../../../games/firfurcio.sna", __dir__)
-      skip "games/firfurcio.sna fixture is not available" unless File.exist?(fixture_path)
+      before { skip "games/firfurcio.sna fixture is not available" unless File.exist?(fixture_path) }
 
       let(:fixture_path) { fixture_path }
       let(:data) { extractor.extract(fixture_path) }

@@ -270,9 +270,10 @@ module PAWS
           width: 32,
         )
         emit_screen_tokens(screen_tokens(wrapped))
-        if newline
+        if newline && !wrapped.to_s.end_with?("\n")
           @screen_cursor[:row] += 1
           @screen_cursor[:col] = 0
+          paginate_screen_if_needed
         end
         @text_flow_cursor = @screen_cursor.dup unless @screen_cursor_explicit
       end

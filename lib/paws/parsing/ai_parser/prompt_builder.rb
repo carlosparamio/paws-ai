@@ -71,6 +71,7 @@ module PAWS
         visible_objects: list_lines(context[:visible_objects]),
         history: context[:history].join("\n"),
         vocab_list: vocabulary_list(context[:vocabulary]),
+        intent_index: intent_index_list(context[:intent_index]),
         input: input,
         di_id: di_id,
         preg_id: preg_id,
@@ -145,6 +146,57 @@ module PAWS
         word = format_word(check[:word], check[:aliases])
         "#{word} (#{check[:type]})"
       end.join(", ")
+    end
+
+    # Renders the full intent index compiled from every process table as a
+    # JSON array that mirrors the output schema the model is expected to emit:
+    # every entry is an object with the SAME field names (verb, noun1,
+    # adject1, adject2, noun2, adverb, prep), so the model can pattern-match
+    # user input to one of these templates and translate words back to IDs
+    # via the Vocabulary List above. Words are used (instead of IDs) so the
+    # model can match free-form input directly; aliases are joined with "/"
+    # exactly as in the Vocabulary List.
+    #
+    # Check slots that surface multiple distinct words across the blocks
+    # sharing a verb+noun pair (e.g. several NOUN2 values, several prepositions)
+    # are rendered as arrays so the model sees every option the game accepts.
+    def intent_index_list(intent_index)
+      entries = Array(intent_index).map { |entry| intent_index_entry(entry) }
+      JSON.pretty_generate(entries)
+    end
+
+    def intent_index_entry(entry)
+      slot = {
+        "verb"    => intent_slot_word(entry[:verb], entry[:verb_aliases]),
+        "noun1"   => intent_slot_word(entry[:noun], entry[:noun_aliases]),
+        "adject1" => [],
+        "adject2" => [],
+        "noun2"   => [],
+        "adverb"  => [],
+        "prep"    => [],
+      }
+
+      Array(entry[:checks]).each do |check|
+        word = format_word(check[:word], check[:aliases])
+        next if word.empty?
+
+        case check[:type]
+        when "adjective1"  then (slot["adject1"] << word)
+        when "adjective2"  then (slot["adject2"] << word)
+        when "noun"        then (slot["noun2"]   << word)
+        when "adverb"      then (slot["adverb"]  << word)
+        when "preposition" then (slot["prep"]    << word)
+        end
+      end
+
+      slot.transform_values do |value|
+        value.is_a?(Array) ? value.uniq : value
+      end
+    end
+
+    def intent_slot_word(primary, aliases)
+      formatted = format_word(primary, aliases)
+      formatted.empty? ? nil : formatted
     end
 
     def list_lines(values)
